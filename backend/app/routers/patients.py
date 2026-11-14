@@ -2,21 +2,28 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from backend.app.database import get_db
-from backend.app.models.models import Patient, TreatmentRecord
+from backend.app.models.models import Patient, TreatmentRecord, User
 from backend.app.schemas.schemas import PatientCreate, PatientUpdate, PatientResponse
 from backend.app.services.patient_service import register_patient, get_patient_by_id, update_patient_info
 from backend.app.services.state import system_state
 from backend.app.websocket.manager import manager
+from backend.app.dependencies.auth import get_current_approved_user, require_role, verify_csrf_token
 
 router = APIRouter(prefix="/api/patients", tags=["Patients"])
 
 @router.post("", response_model=PatientResponse)
-async def create_patient(payload: PatientCreate, db: Session = Depends(get_db)):
+async def create_patient(
+    payload: PatientCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(["ADMIN", "NURSE", "FRONT_DESK"])),
+    _: None = Depends(verify_csrf_token)
+):
     """
     Registers a new patient. Saves to SQLite, sets in-memory Hash Map (O(1)),
     and pushes to Priority Queue Binary Min-Heap (O(log N)).
+    Requires ADMIN, NURSE, or FRONT_DESK role and valid CSRF token.
     """
-    patient = register_patient(db, payload)
+    patient = register_patient(db, payload, user=user)
     
     # Broadcast to connected WebSocket clients
     await manager.broadcast("PATIENT_REGISTERED", {
@@ -35,7 +42,8 @@ def list_patients(
     search_by: str = Query("all", pattern="^(all|id|name)$"),
     severity: Optional[int] = Query(None, ge=1, le=5),
     status: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_approved_user)
 ):
     """
     List all patients with optional search and filters.
@@ -77,7 +85,11 @@ def list_patients(
 
 
 @router.get("/{patient_id}")
-def get_patient(patient_id: str, db: Session = Depends(get_db)):
+def get_patient(
+    patient_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_approved_user)
+):
     """
     Direct patient lookup by ID.
     Uses O(1) in-memory Hash Map lookup.
@@ -94,8 +106,14 @@ def get_patient(patient_id: str, db: Session = Depends(get_db)):
 
 
 @router.put("/{patient_id}")
-async def update_patient(patient_id: str, payload: PatientUpdate, db: Session = Depends(get_db)):
-    updated = update_patient_info(db, patient_id, payload)
+async def update_patient(
+    patient_id: str,
+    payload: PatientUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(["ADMIN", "NURSE"])),
+    _: None = Depends(verify_csrf_token)
+):
+    updated = update_patient_info(db, patient_id, payload, user=user)
     if not updated:
         raise HTTPException(status_code=404, detail=f"Patient with ID '{patient_id}' not found.")
 
@@ -104,7 +122,11 @@ async def update_patient(patient_id: str, payload: PatientUpdate, db: Session = 
 
 
 @router.get("/{patient_id}/history")
-def get_patient_history(patient_id: str, db: Session = Depends(get_db)):
+def get_patient_history(
+    patient_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["ADMIN", "NURSE"]))
+):
     records = db.query(TreatmentRecord).filter(
         TreatmentRecord.patient_id == patient_id
     ).order_by(TreatmentRecord.admitted_at.desc()).all()

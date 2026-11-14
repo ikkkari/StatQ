@@ -13,11 +13,16 @@ import {
   Hash,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { SeverityBadge } from './SeverityBadge';
 
 export const Header = ({ onSelectPatient }) => {
   const { simulation, wsConnected, callNext, advanceTime, notifications, queueData } = useApp();
+  const { hasRole } = useAuth();
+
+  const canCallNext = hasRole(['ADMIN', 'NURSE']);
+  const canAdvanceTime = hasRole(['ADMIN', 'NURSE']);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -156,13 +161,15 @@ export const Header = ({ onSelectPatient }) => {
           <span className="font-mono font-bold text-slate-900">
             {simulation?.simulated_time ? simulation.simulated_time.split(' ')[1] : '00:00:00'}
           </span>
-          <button
-            onClick={() => advanceTime(5.0)}
-            className="ml-1 p-1 hover:bg-slate-200 text-blue-700 rounded transition"
-            title="Advance Simulated Time +5m (triggers priority aging)"
-          >
-            <FastForward className="w-3.5 h-3.5" />
-          </button>
+          {canAdvanceTime && (
+            <button
+              onClick={() => advanceTime(5.0)}
+              className="ml-1 p-1 hover:bg-slate-200 text-blue-700 rounded transition cursor-pointer"
+              title="Advance Simulated Time +5m (triggers priority aging)"
+            >
+              <FastForward className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         {/* Live WebSocket Status */}
@@ -178,16 +185,18 @@ export const Header = ({ onSelectPatient }) => {
           <span className="hidden sm:inline">{wsConnected ? 'Live Sync' : 'Offline'}</span>
         </div>
 
-        {/* Call Next Patient Quick Action */}
-        <button
-          onClick={handleCallNext}
-          disabled={calling || queueData.total_waiting === 0}
-          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-40 text-white font-semibold text-xs rounded-xl shadow-xs hover:shadow transition flex items-center gap-1.5"
-          title="Extract highest-priority patient from Python min-heap via heapq.heappop() [O(log N)]"
-        >
-          <UserCheck className="w-4 h-4" />
-          <span>Call Next</span>
-        </button>
+        {/* Call Next Patient Quick Action (ADMIN and NURSE only) */}
+        {canCallNext && (
+          <button
+            onClick={handleCallNext}
+            disabled={calling || queueData.total_waiting === 0}
+            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-40 text-white font-semibold text-xs rounded-xl shadow-xs hover:shadow transition flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+            title="Extract highest-priority patient from Python min-heap via heapq.heappop() [O(log N)]"
+          >
+            <UserCheck className="w-4 h-4" />
+            <span>Call Next</span>
+          </button>
+        )}
 
         {/* Notifications Bell */}
         <div className="relative">

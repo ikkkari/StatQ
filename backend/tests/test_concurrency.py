@@ -13,6 +13,8 @@ from backend.app.services.state import system_state
 from backend.app.services.patient_service import register_patient, update_patient_info
 from backend.app.services.queue_service import call_next_patient, advance_simulated_time
 from backend.app.services.room_service import discharge_patient_from_room
+from backend.app.core.config import settings
+from backend.tests.conftest import get_auth_tokens
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -22,7 +24,7 @@ def init_db():
     yield
 
 
-def test_concurrent_patient_registration():
+def test_concurrent_patient_registration(admin_user):
     """
     Test 1: Concurrent patient registration.
     Spawns 20 concurrent threads registering patients simultaneously via REST API.
@@ -34,9 +36,12 @@ def test_concurrent_patient_registration():
     """
     num_threads = 20
     results = []
+    raw_token, csrf_token = get_auth_tokens(admin_user.id)
 
     def register_worker(index: int):
         with TestClient(app) as client:
+            client.cookies.set(settings.COOKIE_NAME, raw_token)
+            client.headers[settings.CSRF_HEADER_NAME] = csrf_token
             payload = {
                 "full_name": f"Concurrent Patient {index}",
                 "age": 20 + (index % 50),

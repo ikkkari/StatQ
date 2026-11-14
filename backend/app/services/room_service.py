@@ -1,7 +1,7 @@
 import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
-from backend.app.models.models import TreatmentRoom, Patient, TreatmentRecord, ActivityLog
+from backend.app.models.models import TreatmentRoom, Patient, TreatmentRecord, ActivityLog, User
 from backend.app.services.state import system_state
 
 DEFAULT_ROOMS = [
@@ -70,7 +70,7 @@ def find_available_room(db: Session) -> Optional[TreatmentRoom]:
 
 
 def assign_patient_to_room(
-    db: Session, patient_id: str, room_id: Optional[str] = None
+    db: Session, patient_id: str, room_id: Optional[str] = None, user: Optional[User] = None
 ) -> Tuple[bool, str, Optional[TreatmentRoom], Optional[Patient]]:
     with system_state.lock:
         try:
@@ -119,7 +119,9 @@ def assign_patient_to_room(
                 event_type="ROOM_ASSIGNED",
                 description=f"Patient {patient.full_name} ({patient.id}) assigned to {room.name} ({room.id}).",
                 patient_id=patient.id,
-                details=f"Status changed WAITING -> IN_TREATMENT"
+                details=f"Status changed WAITING -> IN_TREATMENT",
+                user_id=user.id if user else None,
+                user_name=user.full_name or user.username if user else None
             )
             db.add(log)
 
@@ -142,7 +144,7 @@ def assign_patient_to_room(
 
 
 def discharge_patient_from_room(
-    db: Session, room_id: str, notes: str = "Treated and discharged.", outcome: str = "Treated & Discharged"
+    db: Session, room_id: str, notes: str = "Treated and discharged.", outcome: str = "Treated & Discharged", user: Optional[User] = None
 ) -> Tuple[bool, str, Optional[TreatmentRoom], Optional[Patient]]:
     with system_state.lock:
         try:
@@ -194,7 +196,9 @@ def discharge_patient_from_room(
                 event_type="TREATMENT_COMPLETE",
                 description=f"Treatment concluded for {patient.full_name if patient else patient_id}. Room {room.name} released.",
                 patient_id=patient_id,
-                details=f"Outcome: {outcome}. Room now AVAILABLE."
+                details=f"Outcome: {outcome}. Room now AVAILABLE.",
+                user_id=user.id if user else None,
+                user_name=user.full_name or user.username if user else None
             )
             db.add(log)
 

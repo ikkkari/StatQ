@@ -1,7 +1,7 @@
 import datetime
 from typing import List, Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
-from backend.app.models.models import Patient, ActivityLog, TreatmentRoom
+from backend.app.models.models import Patient, ActivityLog, TreatmentRoom, User
 from backend.app.schemas.schemas import PatientCreate, PatientUpdate
 from backend.app.algorithms.priority_queue import QueueItem
 from backend.app.services.state import system_state
@@ -78,7 +78,8 @@ def register_patient(
     db: Session,
     patient_in: PatientCreate,
     is_simulated: bool = False,
-    arrival_time_override: Optional[datetime.datetime] = None
+    arrival_time_override: Optional[datetime.datetime] = None,
+    user: Optional[User] = None
 ) -> Patient:
     with system_state.lock:
         try:
@@ -150,7 +151,9 @@ def register_patient(
                 event_type="QUEUE_PUSH",
                 description=f"Patient {db_patient.full_name} ({db_patient.id}) registered with Severity {db_patient.original_severity}. Added to Min-Heap.",
                 patient_id=db_patient.id,
-                details="heapq.heappush() [O(log N)]"
+                details="heapq.heappush() [O(log N)]",
+                user_id=user.id if user else None,
+                user_name=user.full_name or user.username if user else None
             )
             db.add(log)
             db.commit()
@@ -197,7 +200,7 @@ def get_patient_by_id(db: Session, patient_id: str) -> Optional[Dict[str, Any]]:
 
 
 def update_patient_info(
-    db: Session, patient_id: str, updates: PatientUpdate
+    db: Session, patient_id: str, updates: PatientUpdate, user: Optional[User] = None
 ) -> Optional[Dict[str, Any]]:
     with system_state.lock:
         try:
@@ -236,6 +239,17 @@ def update_patient_info(
                 p.status = updates.status
 
             p.updated_at = datetime.datetime.now()
+
+            log = ActivityLog(
+                timestamp=datetime.datetime.now(),
+                event_type="PATIENT_UPDATED",
+                description=f"Patient {p.full_name} ({p.id}) updated. Status: {p.status}, Severity: {p.effective_severity}.",
+                patient_id=p.id,
+                details=f"Assigned Nurse: {p.assigned_nurse}",
+                user_id=user.id if user else None,
+                user_name=user.full_name or user.username if user else None
+            )
+            db.add(log)
             db.commit()
             db.refresh(p)
 

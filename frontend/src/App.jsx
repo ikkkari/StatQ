@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider, useApp } from './context/AppContext';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -9,11 +10,16 @@ import { RoomsPage } from './pages/RoomsPage';
 import { SimulationPage } from './pages/SimulationPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AdminUsersPage } from './pages/AdminUsersPage';
+import { LoginPage } from './pages/LoginPage';
+import { RegisterPage } from './pages/RegisterPage';
+import { PendingApprovalPage } from './pages/PendingApprovalPage';
 import { RegisterPatientModal } from './components/RegisterPatientModal';
 import { PatientDetailModal } from './components/PatientDetailModal';
 import { DischargeModal } from './components/DischargeModal';
+import { Activity } from 'lucide-react';
 
-function MainApp() {
+function ClinicalWorkspace() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedPatientId, setSelectedPatientId] = useState(null);
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
@@ -74,6 +80,8 @@ function MainApp() {
 
           {activeTab === 'analytics' && <AnalyticsPage />}
 
+          {activeTab === 'admin-users' && <AdminUsersPage />}
+
           {activeTab === 'settings' && <SettingsPage />}
         </main>
       </div>
@@ -119,10 +127,49 @@ function MainApp() {
   );
 }
 
-export default function App() {
+function AuthGate() {
+  const { user, isAuthenticated, isPending, isLoading } = useAuth();
+  const [authView, setAuthView] = useState('login'); // 'login' | 'register'
+
+  // Loading splash
+  if (isLoading) {
+    return (
+      <div className="min-h-screen w-screen flex flex-col items-center justify-center bg-slate-900 text-slate-100">
+        <div className="h-14 w-14 rounded-2xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center mb-4 text-teal-400">
+          <Activity className="h-7 w-7 animate-pulse" />
+        </div>
+        <p className="text-sm font-semibold tracking-wide text-slate-300">
+          Verifying Clinical Credentials...
+        </p>
+      </div>
+    );
+  }
+
+  // Pending administrator approval view
+  if (user && isPending) {
+    return <PendingApprovalPage />;
+  }
+
+  // Not authenticated: Login or Register
+  if (!isAuthenticated) {
+    if (authView === 'register') {
+      return <RegisterPage onSwitchToLogin={() => setAuthView('login')} />;
+    }
+    return <LoginPage onSwitchToRegister={() => setAuthView('register')} />;
+  }
+
+  // Authenticated and approved: full clinical application
   return (
     <AppProvider>
-      <MainApp />
+      <ClinicalWorkspace />
     </AppProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
   );
 }

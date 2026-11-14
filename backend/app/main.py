@@ -1,6 +1,7 @@
+import os
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -9,12 +10,14 @@ from backend.app.services.patient_service import init_system_from_db, register_p
 from backend.app.services.room_service import init_rooms
 from backend.app.services.queue_service import advance_simulated_time
 from backend.app.services.state import system_state
+from backend.app.services.auth_service import get_session_by_token
 from backend.app.websocket.manager import manager
 from backend.app.schemas.schemas import PatientCreate
-from backend.app.models.models import Patient
+from backend.app.models.models import Patient, User
+from backend.app.core.config import settings as app_settings
 
 # Routers
-from backend.app.routers import patients, queue, rooms, simulation, analytics, dsa, settings
+from backend.app.routers import patients, queue, rooms, simulation, analytics, dsa, settings, auth
 
 # Background task for auto simulation
 async def simulation_background_loop():
@@ -114,7 +117,10 @@ def seed_initial_data():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    Base.metadata.create_all(bind=engine)
+    # In production (when DATABASE_URL is set), schema migrations are driven strictly by Alembic
+    # In local development without DATABASE_URL, create_all() provides convenient zero-config initialization
+    if not os.getenv("DATABASE_URL"):
+        Base.metadata.create_all(bind=engine)
     seed_initial_data()
     sim_task = asyncio.create_task(simulation_background_loop())
     yield
@@ -133,16 +139,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS - Allow all origins including Netlify previews and localhost
+# CORS - Allow credentials with explicit trusted origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=app_settings.CORS_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Routers
+app.include_router(auth.router)
 app.include_router(patients.router)
 app.include_router(queue.router)
 app.include_router(rooms.router)
@@ -151,9 +158,29 @@ app.include_router(analytics.router)
 app.include_router(dsa.router)
 app.include_router(settings.router)
 
-# WebSocket Endpoint
+# Authenticated WebSocket Endpoint
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # Validate session cookie on WebSocket handshake
+    cookie_token = websocket.cookies.get(app_settings.COOKIE_NAME)
+    if not cookie_token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized: Missing session cookie.")
+        return
+
+    db = SessionLocal()
+    try:
+        session = get_session_by_token(db, cookie_token)
+        if not session:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized: Invalid or expired session.")
+            return
+
+        user = db.query(User).filter(User.id == session.user_id).first()
+        if not user or user.status != "APPROVED":
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized: Account pending approval or inactive.")
+            return
+    finally:
+        db.close()
+
     await manager.connect(websocket)
     try:
         while True:

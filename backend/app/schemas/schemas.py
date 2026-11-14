@@ -88,6 +88,8 @@ class ActivityLogResponse(BaseModel):
     description: str
     patient_id: Optional[str] = None
     details: Optional[str] = None
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

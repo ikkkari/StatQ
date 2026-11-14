@@ -1,14 +1,16 @@
 from fastapi import APIRouter, Depends, Body
 from sqlalchemy.orm import Session
 from backend.app.database import get_db
+from backend.app.models.models import User
 from backend.app.schemas.schemas import SettingsUpdate
 from backend.app.services.state import system_state
 from backend.app.services.queue_service import advance_simulated_time
+from backend.app.dependencies.auth import require_role, verify_csrf_token
 
 router = APIRouter(prefix="/api/settings", tags=["System Settings"])
 
 @router.get("")
-def get_settings():
+def get_settings(current_user: User = Depends(require_role(["ADMIN"]))):
     return {
         "hospital_name": system_state.hospital_name,
         "aging_interval_minutes": system_state.aging_system.interval_minutes,
@@ -17,7 +19,12 @@ def get_settings():
     }
 
 @router.put("")
-def update_settings(payload: SettingsUpdate, db: Session = Depends(get_db)):
+def update_settings(
+    payload: SettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["ADMIN"])),
+    _: None = Depends(verify_csrf_token)
+):
     if payload.hospital_name is not None:
         system_state.hospital_name = payload.hospital_name.strip()
     if payload.aging_interval_minutes is not None:

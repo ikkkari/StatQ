@@ -3,13 +3,17 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from backend.app.database import get_db
-from backend.app.models.models import Patient, TreatmentRoom, TreatmentRecord, ActivityLog
+from backend.app.models.models import Patient, TreatmentRoom, TreatmentRecord, ActivityLog, User
 from backend.app.services.state import system_state
+from backend.app.dependencies.auth import get_current_approved_user
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
 @router.get("/summary")
-def get_analytics_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
+def get_analytics_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_approved_user)
+) -> Dict[str, Any]:
     all_patients = db.query(Patient).all()
     total_count = len(all_patients)
 

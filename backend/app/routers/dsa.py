@@ -2,14 +2,15 @@ from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from backend.app.database import get_db
-from backend.app.models.models import ActivityLog
+from backend.app.models.models import ActivityLog, User
 from backend.app.schemas.schemas import ActivityLogResponse
 from backend.app.services.state import system_state
+from backend.app.dependencies.auth import get_current_approved_user, require_role
 
 router = APIRouter(prefix="/api/dsa", tags=["DSA Intelligence"])
 
 @router.get("/telemetry")
-def get_dsa_telemetry() -> Dict[str, Any]:
+def get_dsa_telemetry(current_user: User = Depends(get_current_approved_user)) -> Dict[str, Any]:
     """
     Subtle technical telemetry for academic presentations:
     Data structures, operations, complexities, and real-time state.
@@ -53,7 +54,8 @@ def get_dsa_telemetry() -> Dict[str, Any]:
 @router.get("/activity-logs", response_model=List[ActivityLogResponse])
 def get_activity_logs(
     limit: int = Query(30, ge=5, le=100),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["ADMIN", "NURSE"]))
 ):
     """
     Activity log of genuine backend events (QUEUE_PUSH, QUEUE_POP, PRIORITY_AGED, ROOM_ASSIGNED, etc.)

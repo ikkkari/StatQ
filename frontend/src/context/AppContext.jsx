@@ -1,9 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../services/api';
+import { useAuth } from './AuthContext';
 
 const AppContext = createContext();
 
 export const AppProvider = ({ children }) => {
+  const { isAuthenticated } = useAuth();
+
   const [queueData, setQueueData] = useState({ items: [], total_waiting: 0, telemetry: {} });
   const [rooms, setRooms] = useState([]);
   const [analytics, setAnalytics] = useState(null);
@@ -32,8 +35,9 @@ export const AppProvider = ({ children }) => {
     }, 4500);
   }, []);
 
-  // Fetch all live data
+  // Fetch all live clinical data
   const refreshAll = useCallback(async () => {
+    if (!isAuthenticated) return;
     try {
       const [qRes, rRes, aRes, dsaRes, simRes, logsRes] = await Promise.all([
         api.getQueue().catch(() => ({ items: [], total_waiting: 0, telemetry: {} })),
@@ -55,10 +59,20 @@ export const AppProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
-  // WebSocket Connection
+  // WebSocket Connection - only when user is authenticated and approved
   useEffect(() => {
+    if (!isAuthenticated) {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      setWsConnected(false);
+      setLoading(false);
+      return;
+    }
+
     let isMounted = true;
 
     const connectWebSocket = () => {
@@ -71,7 +85,7 @@ export const AppProvider = ({ children }) => {
 
         if (apiUrl) {
           wsUrl = apiUrl.replace(/^http/, 'ws') + '/ws';
-        } else if (window.location.host.includes('netlify.app')) {
+        } else if (typeof window !== 'undefined' && window.location.host.includes('netlify.app')) {
           wsUrl = 'wss://statq.onrender.com/ws';
         } else {
           const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -79,52 +93,59 @@ export const AppProvider = ({ children }) => {
         }
       }
 
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      try {
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
 
-      ws.onopen = () => {
-        if (!isMounted) return;
-        setWsConnected(true);
-        console.log('Connected to StatQ WebSocket');
-      };
+        ws.onopen = () => {
+          if (!isMounted) return;
+          setWsConnected(true);
+          console.log('Connected to StatQ WebSocket');
+        };
 
-      ws.onmessage = (event) => {
-        if (!isMounted) return;
-        try {
-          const payload = JSON.parse(event.data);
-          const { event: eventType, data } = payload;
+        ws.onmessage = (event) => {
+          if (!isMounted) return;
+          try {
+            const payload = JSON.parse(event.data);
+            const { event: eventType, data } = payload;
 
-          // React dynamically to real-time events
-          if (eventType === 'PATIENT_REGISTERED') {
-            addNotification(`New Patient Registered: ${data.full_name} (Severity ${data.severity})`, 'info');
-          } else if (eventType === 'PATIENT_CALLED') {
-            addNotification(`Called to Treatment: ${data.patient.full_name} -> ${data.room.name}`, 'success');
-          } else if (eventType === 'ROOM_UPDATED') {
-            addNotification(`Room Status Updated: ${data.message}`, 'info');
-          } else if (eventType === 'SIMULATION_TIME_ADVANCED') {
-            if (data.escalated_count > 0) {
-              addNotification(`Priority Aging: ${data.escalated_count} patient(s) escalated to higher priority!`, 'warning');
+            // React dynamically to real-time events
+            if (eventType === 'PATIENT_REGISTERED') {
+              addNotification(`New Patient Registered: ${data.full_name} (Severity ${data.severity})`, 'info');
+            } else if (eventType === 'PATIENT_CALLED') {
+              addNotification(`Called to Treatment: ${data.patient.full_name} -> ${data.room.name}`, 'success');
+            } else if (eventType === 'ROOM_UPDATED') {
+              addNotification(`Room Status Updated: ${data.message}`, 'info');
+            } else if (eventType === 'SIMULATION_TIME_ADVANCED') {
+              if (data.escalated_count > 0) {
+                addNotification(`Priority Aging: ${data.escalated_count} patient(s) escalated to higher priority!`, 'warning');
+              }
             }
+
+            // Refresh live views
+            refreshAll();
+          } catch (e) {
+            console.error('Error processing WS message:', e);
           }
+        };
 
-          // Refresh live views
-          refreshAll();
-        } catch (e) {
-          console.error('Error processing WS message:', e);
-        }
-      };
+        ws.onclose = () => {
+          if (!isMounted) return;
+          setWsConnected(false);
+          // Retry connection in 4 seconds if still authenticated
+          reconnectTimeoutRef.current = setTimeout(() => {
+            if (isMounted && isAuthenticated) {
+              connectWebSocket();
+            }
+          }, 4000);
+        };
 
-      ws.onclose = () => {
-        if (!isMounted) return;
-        setWsConnected(false);
-        // Retry connection in 3 seconds
-        reconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
-      };
-
-      ws.onerror = (err) => {
-        console.warn('WebSocket error, waiting for retry...');
-        ws.close();
-      };
+        ws.onerror = () => {
+          ws.close();
+        };
+      } catch (err) {
+        console.warn('Failed to initialize WebSocket:', err);
+      }
     };
 
     connectWebSocket();
@@ -135,7 +156,7 @@ export const AppProvider = ({ children }) => {
       if (wsRef.current) wsRef.current.close();
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     };
-  }, [refreshAll, addNotification]);
+  }, [isAuthenticated, refreshAll, addNotification]);
 
   // Action helpers
   const callNext = async () => {

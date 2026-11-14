@@ -1,7 +1,7 @@
 import datetime
 from typing import List, Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
-from backend.app.models.models import Patient, TreatmentRoom, ActivityLog
+from backend.app.models.models import Patient, TreatmentRoom, ActivityLog, User
 from backend.app.algorithms.priority_queue import QueueItem
 from backend.app.services.state import system_state
 from backend.app.services.room_service import find_available_room, assign_patient_to_room
@@ -19,7 +19,7 @@ def get_live_queue_data() -> Dict[str, Any]:
     }
 
 
-def call_next_patient(db: Session) -> Tuple[bool, str, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+def call_next_patient(db: Session, user: Optional[User] = None) -> Tuple[bool, str, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
     Triage call next patient workflow:
     1. Check if any room is free.
@@ -41,7 +41,7 @@ def call_next_patient(db: Session) -> Tuple[bool, str, Optional[Dict[str, Any]],
 
         try:
             # 3. Assign to room
-            success, msg, assigned_room, patient = assign_patient_to_room(db, next_item.patient_id, room.id)
+            success, msg, assigned_room, patient = assign_patient_to_room(db, next_item.patient_id, room.id, user=user)
             if not success:
                 # Re-insert back into heap if room assignment somehow failed
                 system_state.priority_queue.push(next_item)
@@ -54,7 +54,9 @@ def call_next_patient(db: Session) -> Tuple[bool, str, Optional[Dict[str, Any]],
                 event_type="QUEUE_POP",
                 description=f"Highest-priority patient {patient.full_name} ({patient.id}) called from Min-Heap. Severity: {patient.effective_severity}.",
                 patient_id=patient.id,
-                details="heapq.heappop() [O(log N)]"
+                details="heapq.heappop() [O(log N)]",
+                user_id=user.id if user else None,
+                user_name=user.full_name or user.username if user else None
             )
             db.add(log)
             db.commit()
