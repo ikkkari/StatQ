@@ -133,11 +133,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS
+# CORS - Allow all origins including Netlify previews and localhost
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
