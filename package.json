@@ -1,0 +1,8 @@
+{
+  "name": "statq-backend",
+  "version": "1.0.0",
+  "description": "StatQ Emergency Room Triage Backend",
+  "scripts": {
+    "start": "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
+  }
+}
