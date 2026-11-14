@@ -64,9 +64,15 @@ export const AppProvider = ({ children }) => {
     const connectWebSocket = () => {
       let wsUrl = import.meta.env.VITE_WS_URL;
       if (!wsUrl) {
-        if (import.meta.env.VITE_API_BASE_URL) {
-          const apiUrl = import.meta.env.VITE_API_BASE_URL;
+        let apiUrl = import.meta.env.VITE_API_BASE_URL;
+        if (apiUrl && apiUrl.includes('statq-backend.onrender.com')) {
+          apiUrl = 'https://statq.onrender.com';
+        }
+
+        if (apiUrl) {
           wsUrl = apiUrl.replace(/^http/, 'ws') + '/ws';
+        } else if (window.location.host.includes('netlify.app')) {
+          wsUrl = 'wss://statq.onrender.com/ws';
         } else {
           const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
           wsUrl = `${protocol}//${window.location.host}/ws`;

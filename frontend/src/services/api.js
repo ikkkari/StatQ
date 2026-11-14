@@ -1,4 +1,10 @@
-const BASE_HOST = import.meta.env.VITE_API_BASE_URL || '';
+let BASE_HOST = import.meta.env.VITE_API_BASE_URL || '';
+
+// Automatically resolve to the real live Render backend
+if (BASE_HOST.includes('statq-backend.onrender.com') || (!BASE_HOST && typeof window !== 'undefined' && window.location.host.includes('netlify.app'))) {
+  BASE_HOST = 'https://statq.onrender.com';
+}
+
 const API_BASE = `${BASE_HOST}/api`;
 
 export const api = {
