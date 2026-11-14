@@ -30,3 +30,8 @@ frontend/.env.local
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Environment Variables / Secrets
+.env
+.env.*
+!.env.example

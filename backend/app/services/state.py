@@ -1,10 +1,12 @@
 import datetime
+import threading
 from backend.app.algorithms.priority_queue import TriagePriorityQueue
 from backend.app.algorithms.hash_map import PatientHashMap
 from backend.app.algorithms.aging import PriorityAgingSystem
 
 class SystemState:
     def __init__(self):
+        self.lock = threading.RLock()
         self.priority_queue = TriagePriorityQueue()
         self.patient_hash_map = PatientHashMap()
         self.aging_system = PriorityAgingSystem(interval_minutes=5.0)

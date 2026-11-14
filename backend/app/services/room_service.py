@@ -72,128 +72,138 @@ def find_available_room(db: Session) -> Optional[TreatmentRoom]:
 def assign_patient_to_room(
     db: Session, patient_id: str, room_id: Optional[str] = None
 ) -> Tuple[bool, str, Optional[TreatmentRoom], Optional[Patient]]:
-    # Find room
-    if room_id:
-        room = db.query(TreatmentRoom).filter(TreatmentRoom.id == room_id).first()
-        if not room:
-            return False, f"Room {room_id} not found.", None, None
-        if room.is_occupied:
-            return False, f"Room {room.name} ({room.id}) is already occupied.", None, None
-    else:
-        room = find_available_room(db)
-        if not room:
-            return False, "All treatment rooms are currently occupied. Cannot call next patient.", None, None
+    with system_state.lock:
+        try:
+            # Find room
+            if room_id:
+                room = db.query(TreatmentRoom).filter(TreatmentRoom.id == room_id).first()
+                if not room:
+                    return False, f"Room {room_id} not found.", None, None
+                if room.is_occupied:
+                    return False, f"Room {room.name} ({room.id}) is already occupied.", None, None
+            else:
+                room = find_available_room(db)
+                if not room:
+                    return False, "All treatment rooms are currently occupied. Cannot call next patient.", None, None
 
-    # Find patient
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        return False, f"Patient {patient_id} not found.", None, None
+            # Find patient
+            patient = db.query(Patient).filter(Patient.id == patient_id).first()
+            if not patient:
+                return False, f"Patient {patient_id} not found.", None, None
 
-    now = datetime.datetime.now()
+            now = datetime.datetime.now()
 
-    # Assign room
-    room.is_occupied = True
-    room.current_patient_id = patient.id
-    room.occupied_at = now
+            # Assign room
+            room.is_occupied = True
+            room.current_patient_id = patient.id
+            room.occupied_at = now
 
-    # Update patient
-    patient.status = "IN_TREATMENT"
-    patient.current_room_id = room.id
-    patient.treatment_start_time = now
+            # Update patient
+            patient.status = "IN_TREATMENT"
+            patient.current_room_id = room.id
+            patient.treatment_start_time = now
 
-    # Create treatment record
-    t_record = TreatmentRecord(
-        patient_id=patient.id,
-        room_id=room.id,
-        room_name=room.name,
-        admitted_at=now,
-        notes=f"Triage intake complaint: {patient.chief_complaint}"
-    )
-    db.add(t_record)
+            # Create treatment record
+            t_record = TreatmentRecord(
+                patient_id=patient.id,
+                room_id=room.id,
+                room_name=room.name,
+                admitted_at=now,
+                notes=f"Triage intake complaint: {patient.chief_complaint}"
+            )
+            db.add(t_record)
 
-    # Activity log
-    log = ActivityLog(
-        timestamp=now,
-        event_type="ROOM_ASSIGNED",
-        description=f"Patient {patient.full_name} ({patient.id}) assigned to {room.name} ({room.id}).",
-        patient_id=patient.id,
-        details=f"Status changed WAITING -> IN_TREATMENT"
-    )
-    db.add(log)
+            # Activity log
+            log = ActivityLog(
+                timestamp=now,
+                event_type="ROOM_ASSIGNED",
+                description=f"Patient {patient.full_name} ({patient.id}) assigned to {room.name} ({room.id}).",
+                patient_id=patient.id,
+                details=f"Status changed WAITING -> IN_TREATMENT"
+            )
+            db.add(log)
 
-    db.commit()
-    db.refresh(room)
-    db.refresh(patient)
+            db.commit()
+            db.refresh(room)
+            db.refresh(patient)
 
-    # Update in-memory hash map
-    pt_cached = system_state.patient_hash_map.get(patient.id)
-    if pt_cached:
-        pt_cached["status"] = "IN_TREATMENT"
-        pt_cached["current_room_id"] = room.id
-        pt_cached["treatment_start_time"] = now.isoformat()
-        system_state.patient_hash_map.set(patient.id, pt_cached)
+            # Update in-memory hash map
+            pt_cached = system_state.patient_hash_map.get(patient.id)
+            if pt_cached:
+                pt_cached["status"] = "IN_TREATMENT"
+                pt_cached["current_room_id"] = room.id
+                pt_cached["treatment_start_time"] = now.isoformat()
+                system_state.patient_hash_map.set(patient.id, pt_cached)
 
-    return True, f"Patient {patient.full_name} assigned to {room.name}.", room, patient
+            return True, f"Patient {patient.full_name} assigned to {room.name}.", room, patient
+        except Exception:
+            db.rollback()
+            raise
 
 
 def discharge_patient_from_room(
     db: Session, room_id: str, notes: str = "Treated and discharged.", outcome: str = "Treated & Discharged"
 ) -> Tuple[bool, str, Optional[TreatmentRoom], Optional[Patient]]:
-    room = db.query(TreatmentRoom).filter(TreatmentRoom.id == room_id).first()
-    if not room:
-        return False, f"Room {room_id} not found.", None, None
+    with system_state.lock:
+        try:
+            room = db.query(TreatmentRoom).filter(TreatmentRoom.id == room_id).first()
+            if not room:
+                return False, f"Room {room_id} not found.", None, None
 
-    if not room.is_occupied or not room.current_patient_id:
-        return False, f"Room {room.name} is not currently occupied.", None, None
+            if not room.is_occupied or not room.current_patient_id:
+                return False, f"Room {room.name} is not currently occupied.", None, None
 
-    patient_id = room.current_patient_id
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    now = datetime.datetime.now()
+            patient_id = room.current_patient_id
+            patient = db.query(Patient).filter(Patient.id == patient_id).first()
+            now = datetime.datetime.now()
 
-    # Update TreatmentRecord
-    t_record = db.query(TreatmentRecord).filter(
-        TreatmentRecord.patient_id == patient_id,
-        TreatmentRecord.room_id == room.id,
-        TreatmentRecord.discharged_at == None
-    ).order_by(TreatmentRecord.id.desc()).first()
+            # Update TreatmentRecord
+            t_record = db.query(TreatmentRecord).filter(
+                TreatmentRecord.patient_id == patient_id,
+                TreatmentRecord.room_id == room.id,
+                TreatmentRecord.discharged_at == None
+            ).order_by(TreatmentRecord.id.desc()).first()
 
-    if t_record:
-        t_record.discharged_at = now
-        t_record.notes = notes
-        t_record.outcome = outcome
+            if t_record:
+                t_record.discharged_at = now
+                t_record.notes = notes
+                t_record.outcome = outcome
 
-    # Free the room
-    room.is_occupied = False
-    room.current_patient_id = None
-    room.occupied_at = None
+            # Free the room
+            room.is_occupied = False
+            room.current_patient_id = None
+            room.occupied_at = None
 
-    # Update patient status
-    if patient:
-        patient.status = "COMPLETED"
-        patient.current_room_id = None
-        patient.treatment_end_time = now
+            # Update patient status
+            if patient:
+                patient.status = "COMPLETED"
+                patient.current_room_id = None
+                patient.treatment_end_time = now
 
-        # Update hash map
-        pt_cached = system_state.patient_hash_map.get(patient.id)
-        if pt_cached:
-            pt_cached["status"] = "COMPLETED"
-            pt_cached["current_room_id"] = None
-            pt_cached["treatment_end_time"] = now.isoformat()
-            system_state.patient_hash_map.set(patient.id, pt_cached)
+                # Update hash map
+                pt_cached = system_state.patient_hash_map.get(patient.id)
+                if pt_cached:
+                    pt_cached["status"] = "COMPLETED"
+                    pt_cached["current_room_id"] = None
+                    pt_cached["treatment_end_time"] = now.isoformat()
+                    system_state.patient_hash_map.set(patient.id, pt_cached)
 
-    # Activity log
-    log = ActivityLog(
-        timestamp=now,
-        event_type="TREATMENT_COMPLETE",
-        description=f"Treatment concluded for {patient.full_name if patient else patient_id}. Room {room.name} released.",
-        patient_id=patient_id,
-        details=f"Outcome: {outcome}. Room now AVAILABLE."
-    )
-    db.add(log)
+            # Activity log
+            log = ActivityLog(
+                timestamp=now,
+                event_type="TREATMENT_COMPLETE",
+                description=f"Treatment concluded for {patient.full_name if patient else patient_id}. Room {room.name} released.",
+                patient_id=patient_id,
+                details=f"Outcome: {outcome}. Room now AVAILABLE."
+            )
+            db.add(log)
 
-    db.commit()
-    db.refresh(room)
-    if patient:
-        db.refresh(patient)
+            db.commit()
+            db.refresh(room)
+            if patient:
+                db.refresh(patient)
 
-    return True, f"Room {room.name} is now available.", room, patient
+            return True, f"Room {room.name} is now available.", room, patient
+        except Exception:
+            db.rollback()
+            raise

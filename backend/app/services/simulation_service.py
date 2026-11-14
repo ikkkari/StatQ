@@ -82,74 +82,81 @@ def generate_random_patient_payload() -> PatientCreate:
 
 
 def generate_batch_patients(db: Session, count: int = 5) -> List[Dict[str, Any]]:
-    created = []
-    for _ in range(count):
-        payload = generate_random_patient_payload()
-        pt = register_patient(db, payload, is_simulated=True)
-        created.append({
-            "id": pt.id,
-            "full_name": pt.full_name,
-            "severity": pt.original_severity,
-            "complaint": pt.chief_complaint,
-            "arrival_order": pt.arrival_order
-        })
-    return created
+    with system_state.lock:
+        created = []
+        for _ in range(count):
+            payload = generate_random_patient_payload()
+            pt = register_patient(db, payload, is_simulated=True)
+            created.append({
+                "id": pt.id,
+                "full_name": pt.full_name,
+                "severity": pt.original_severity,
+                "complaint": pt.chief_complaint,
+                "arrival_order": pt.arrival_order
+            })
+        return created
 
 
 def reset_simulation_data(db: Session, only_simulated: bool = True) -> Dict[str, Any]:
     """
     Resets simulation data without corrupting persistent production records if only_simulated=True.
+    Protected by system_state.lock for concurrency safety.
     """
-    if only_simulated:
-        sim_pts = db.query(Patient).filter(Patient.is_simulated == True).all()
-        sim_ids = [p.id for p in sim_pts]
+    with system_state.lock:
+        try:
+            if only_simulated:
+                sim_pts = db.query(Patient).filter(Patient.is_simulated == True).all()
+                sim_ids = [p.id for p in sim_pts]
 
-        # Reset rooms occupied by simulated patients
-        rooms = db.query(TreatmentRoom).filter(TreatmentRoom.current_patient_id.in_(sim_ids)).all()
-        for r in rooms:
-            r.is_occupied = False
-            r.current_patient_id = None
-            r.occupied_at = None
+                # Reset rooms occupied by simulated patients
+                rooms = db.query(TreatmentRoom).filter(TreatmentRoom.current_patient_id.in_(sim_ids)).all()
+                for r in rooms:
+                    r.is_occupied = False
+                    r.current_patient_id = None
+                    r.occupied_at = None
 
-        # Delete treatment records and activity logs
-        db.query(TreatmentRecord).filter(TreatmentRecord.patient_id.in_(sim_ids)).delete(synchronize_session=False)
-        db.query(ActivityLog).filter(ActivityLog.patient_id.in_(sim_ids)).delete(synchronize_session=False)
+                # Delete treatment records and activity logs
+                db.query(TreatmentRecord).filter(TreatmentRecord.patient_id.in_(sim_ids)).delete(synchronize_session=False)
+                db.query(ActivityLog).filter(ActivityLog.patient_id.in_(sim_ids)).delete(synchronize_session=False)
 
-        # Delete simulated patients
-        db.query(Patient).filter(Patient.is_simulated == True).delete(synchronize_session=False)
-        db.commit()
-    else:
-        # Full reset
-        db.query(TreatmentRecord).delete()
-        db.query(ActivityLog).delete()
-        rooms = db.query(TreatmentRoom).all()
-        for r in rooms:
-            r.is_occupied = False
-            r.current_patient_id = None
-            r.occupied_at = None
-        db.query(Patient).delete()
-        db.commit()
+                # Delete simulated patients
+                db.query(Patient).filter(Patient.is_simulated == True).delete(synchronize_session=False)
+                db.commit()
+            else:
+                # Full reset
+                db.query(TreatmentRecord).delete()
+                db.query(ActivityLog).delete()
+                rooms = db.query(TreatmentRoom).all()
+                for r in rooms:
+                    r.is_occupied = False
+                    r.current_patient_id = None
+                    r.occupied_at = None
+                db.query(Patient).delete()
+                db.commit()
 
-    # Reset state clock & reinit from remaining DB records
-    system_state.simulated_minutes_elapsed = 0.0
-    system_state.simulated_clock = datetime.datetime.now()
-    system_state.initialized = False
-    init_system_from_db(db)
+            # Reset state clock & reinit from remaining DB records
+            system_state.simulated_minutes_elapsed = 0.0
+            system_state.simulated_clock = datetime.datetime.now()
+            system_state.initialized = False
+            init_system_from_db(db)
 
-    # Log reset
-    log = ActivityLog(
-        timestamp=datetime.datetime.now(),
-        event_type="SIMULATION_RESET",
-        description="Simulation data successfully reset. Queue and room allocations refreshed.",
-        patient_id=None,
-        details="DSA heap and hash map reinitialized from clean state."
-    )
-    db.add(log)
-    db.commit()
+            # Log reset
+            log = ActivityLog(
+                timestamp=datetime.datetime.now(),
+                event_type="SIMULATION_RESET",
+                description="Simulation data successfully reset. Queue and room allocations refreshed.",
+                patient_id=None,
+                details="DSA heap and hash map reinitialized from clean state."
+            )
+            db.add(log)
+            db.commit()
 
-    return {
-        "status": "success",
-        "message": "Simulation data reset successfully.",
-        "remaining_patients": system_state.patient_hash_map.size(),
-        "remaining_in_queue": system_state.priority_queue.size()
-    }
+            return {
+                "status": "success",
+                "message": "Simulation data reset successfully.",
+                "remaining_patients": system_state.patient_hash_map.size(),
+                "remaining_in_queue": system_state.priority_queue.size()
+            }
+        except Exception:
+            db.rollback()
+            raise
